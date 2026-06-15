@@ -32,7 +32,15 @@ CREATE TABLE IF NOT EXISTS characters (
   model_api_key TEXT DEFAULT '',
   model_name TEXT DEFAULT '',
   model_base_url TEXT DEFAULT '',
+  -- 独立生图配置（角色级，与聊天模型分离；前端 CharacterModelSettings 已使用）
+  image_model TEXT DEFAULT '',
+  image_api_key TEXT DEFAULT '',
+  image_base_url TEXT DEFAULT '',
+  -- 语音配置（角色级）
   voice_id TEXT DEFAULT '',
+  voice_mode TEXT DEFAULT 'off',
+  tts_model TEXT DEFAULT '',
+  elevenlabs_api_key TEXT DEFAULT '',
   tts_enabled INTEGER DEFAULT 0,
   stt_enabled INTEGER DEFAULT 0,
   chat_space_id TEXT DEFAULT '',
@@ -109,3 +117,12 @@ CREATE INDEX IF NOT EXISTS idx_messages_user_chat ON messages(user_id, chat_spac
 CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);
 CREATE INDEX IF NOT EXISTS idx_memories_user_space ON character_memories(user_id, chat_space_id);
 CREATE INDEX IF NOT EXISTS idx_characters_user ON characters(user_id);
+
+-- Migration: 补齐 characters 表缺失的列（独立生图 + 语音配置）。
+-- 旧库执行，列已存在时该条 ALTER 会报错，忽略即可。
+ALTER TABLE characters ADD COLUMN image_model TEXT DEFAULT '';
+ALTER TABLE characters ADD COLUMN image_api_key TEXT DEFAULT '';
+ALTER TABLE characters ADD COLUMN image_base_url TEXT DEFAULT '';
+ALTER TABLE characters ADD COLUMN voice_mode TEXT DEFAULT 'off';
+ALTER TABLE characters ADD COLUMN tts_model TEXT DEFAULT '';
+ALTER TABLE characters ADD COLUMN elevenlabs_api_key TEXT DEFAULT '';

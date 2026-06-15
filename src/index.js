@@ -203,8 +203,8 @@ app.post("/api/characters", authMiddleware, async (c) => {
   const id = body.id || `char_custom_${Date.now()}`;
   const chatSpaceId = body.chatSpaceId || id;
 
-  await db.prepare(`INSERT INTO characters (id, user_id, name, avatar_initial, description, personality, backstory, orientation, custom_orientation, relationship_modes, custom_relationship, involved_characters, kinks, pure_love_mode, model_provider, model_api_key, model_name, model_base_url, voice_id, tts_enabled, stt_enabled, chat_space_id, status, is_default)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+  await db.prepare(`INSERT INTO characters (id, user_id, name, avatar_initial, description, personality, backstory, orientation, custom_orientation, relationship_modes, custom_relationship, involved_characters, kinks, pure_love_mode, model_provider, model_api_key, model_name, model_base_url, image_model, image_api_key, image_base_url, voice_id, voice_mode, tts_model, elevenlabs_api_key, tts_enabled, stt_enabled, chat_space_id, status, is_default)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .bind(
       id, userId,
       body.name || "", body.avatarInitial || (body.name || "?").slice(0, 1),
@@ -214,7 +214,9 @@ app.post("/api/characters", authMiddleware, async (c) => {
       body.customRelationship || "", JSON.stringify(body.involvedCharacters || []),
       JSON.stringify(body.kinks || []), body.pureLoveMode ? 1 : 0,
       body.modelProvider || "", body.modelApiKey || "", body.modelName || "", body.modelBaseUrl || "",
-      body.voiceId || "", body.ttsEnabled ? 1 : 0, body.sttEnabled ? 1 : 0,
+      body.imageModel || "", body.imageApiKey || "", body.imageBaseUrl || "",
+      body.voiceId || "", body.voiceMode || "off", body.ttsModel || "", body.elevenlabsApiKey || "",
+      body.ttsEnabled ? 1 : 0, body.sttEnabled ? 1 : 0,
       chatSpaceId, body.status || "pending", body.isDefault ? 1 : 0
     ).run();
 
@@ -231,17 +233,31 @@ app.put("/api/characters/:id", authMiddleware, async (c) => {
   const existing = await db.prepare("SELECT id FROM characters WHERE id = ? AND user_id = ?").bind(id, userId).first();
   if (!existing) return c.json({ error: "角色不存在" }, 404);
 
-  const fields = ["name","avatar_initial","description","personality","backstory","orientation","custom_orientation",
-    "relationship_modes","custom_relationship","involved_characters","kinks","pure_love_mode",
-    "model_provider","model_api_key","model_name","model_base_url","voice_id","tts_enabled","stt_enabled","status"];
+  // 驼峰 → 列名映射（前端发 camelCase，后端存 snake_case）
+  const FIELD_MAP = {
+    name: "name", avatarInitial: "avatar_initial", description: "description",
+    personality: "personality", backstory: "backstory",
+    orientation: "orientation", customOrientation: "custom_orientation",
+    relationshipModes: "relationship_modes", customRelationship: "custom_relationship",
+    involvedCharacters: "involved_characters", kinks: "kinks",
+    pureLoveMode: "pure_love_mode",
+    modelProvider: "model_provider", modelApiKey: "model_api_key",
+    modelName: "model_name", modelBaseUrl: "model_base_url",
+    imageModel: "image_model", imageApiKey: "image_api_key", imageBaseUrl: "image_base_url",
+    voiceId: "voice_id", voiceMode: "voice_mode", ttsModel: "tts_model",
+    elevenlabsApiKey: "elevenlabs_api_key",
+    ttsEnabled: "tts_enabled", sttEnabled: "stt_enabled", status: "status",
+  };
+  const JSON_FIELDS = new Set(["relationship_modes", "involved_characters", "kinks"]);
+
   const sets = [];
   const vals = [];
-  for (const f of fields) {
-    if (body[f] !== undefined) {
-      const val = ["relationship_modes","involved_characters","kinks"].includes(f)
-        ? JSON.stringify(body[f])
-        : (typeof body[f] === "boolean" ? (body[f] ? 1 : 0) : body[f]);
-      sets.push(`${f} = ?`);
+  for (const [camel, col] of Object.entries(FIELD_MAP)) {
+    if (body[camel] !== undefined) {
+      const val = JSON_FIELDS.has(col)
+        ? JSON.stringify(body[camel])
+        : (typeof body[camel] === "boolean" ? (body[camel] ? 1 : 0) : body[camel]);
+      sets.push(`${col} = ?`);
       vals.push(val);
     }
   }
@@ -283,7 +299,13 @@ function rowToCharacter(row) {
     modelApiKey: row.model_api_key,
     modelName: row.model_name,
     modelBaseUrl: row.model_base_url,
+    imageModel: row.image_model || "",
+    imageApiKey: row.image_api_key || "",
+    imageBaseUrl: row.image_base_url || "",
     voiceId: row.voice_id,
+    voiceMode: row.voice_mode || "off",
+    ttsModel: row.tts_model || "",
+    elevenlabsApiKey: row.elevenlabs_api_key || "",
     ttsEnabled: !!row.tts_enabled,
     sttEnabled: !!row.stt_enabled,
     chatSpaceId: row.chat_space_id,
@@ -628,15 +650,30 @@ app.put("/api/messages/:id", authMiddleware, async (c) => {
   const existing = await db.prepare("SELECT id FROM messages WHERE id = ? AND user_id = ?").bind(id, userId).first();
   if (!existing) return c.json({ error: "消息不存在" }, 404);
 
-  const fields = ["status","read_by_user","read_by_du","excluded_from_context","deleted_at","superseded_at",
-    "reasoning_visible","content","quote","meta","reasoning_content"];
+  // 驼峰 → 列名映射
+  const MSG_FIELD_MAP = {
+    status: "status",
+    readByUser: "read_by_user",
+    readByDu: "read_by_du",
+    excludedFromContext: "excluded_from_context",
+    deletedAt: "deleted_at",
+    supersededAt: "superseded_at",
+    reasoningVisible: "reasoning_visible",
+    content: "content",
+    quote: "quote",
+    meta: "meta",
+    reasoningContent: "reasoning_content",
+  };
+  const JSON_FIELDS = new Set(["quote", "meta"]);
+
   const sets = [];
   const vals = [];
-  for (const f of fields) {
-    if (body[f] !== undefined) {
-      const val = f === "quote" || f === "meta" ? JSON.stringify(body[f])
-        : (typeof body[f] === "boolean" ? (body[f] ? 1 : 0) : body[f]);
-      sets.push(`${f} = ?`);
+  for (const [camel, col] of Object.entries(MSG_FIELD_MAP)) {
+    if (body[camel] !== undefined) {
+      const val = JSON_FIELDS.has(col)
+        ? JSON.stringify(body[camel])
+        : (typeof body[camel] === "boolean" ? (body[camel] ? 1 : 0) : body[camel]);
+      sets.push(`${col} = ?`);
       vals.push(val);
     }
   }
@@ -653,7 +690,7 @@ function rowToMessage(row) {
   const parseJSON = (str, fb) => { try { return JSON.parse(str); } catch { return fb; } };
   return {
     id: row.id,
-    session_id: row.session_id,
+    sessionId: row.session_id,
     conversationId: row.conversation_id,
     chatSpaceId: row.chat_space_id,
     role: row.role,
@@ -664,13 +701,13 @@ function rowToMessage(row) {
     reasoningVisible: !!row.reasoning_visible,
     responseGroupId: row.response_group_id,
     status: row.status,
-    read_by_user: !!row.read_by_user,
-    read_by_du: !!row.read_by_du,
+    readByUser: !!row.read_by_user,
+    readByDu: !!row.read_by_du,
     excludedFromContext: !!row.excluded_from_context,
     deletedAt: row.deleted_at,
     supersededAt: row.superseded_at,
     meta: parseJSON(row.meta, {}),
-    created_at: row.created_at,
+    createdAt: row.created_at,
   };
 }
 
