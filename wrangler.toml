@@ -10,8 +10,13 @@ binding = "DB"
 database_name = "dukou-db"
 database_id = "f03c94d7-1ab1-41c7-9539-42e7cd907e57"
 
+# JWT_SECRET 不再放 vars（明文会进仓库/被 git 历史永久保留）。
+# 用 secret 配置：
+#   wrangler secret put JWT_SECRET
+#   wrangler secret put JWT_SECRET --env production
+# 生产环境必须用 >=32 字节随机串，且与开发环境不同。
 [vars]
-JWT_SECRET = "dukou-jwt-secret-dev-only"
+# (JWT_SECRET removed — configure via `wrangler secret put`)
 
 [triggers]
 crons = ["0 2 * * *"]
@@ -25,4 +30,4 @@ database_name = "dukou-db"
 database_id = "f03c94d7-1ab1-41c7-9539-42e7cd907e57"
 
 [env.production.vars]
-JWT_SECRET = "dukou-jwt-secret-change-me"
+# (JWT_SECRET removed — configure via `wrangler secret put JWT_SECRET --env production`)

@@ -54,10 +54,18 @@ CREATE TABLE IF NOT EXISTS character_memories (
   archived INTEGER DEFAULT 0,
   last_accessed DATETIME,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  -- 记忆锁定 / 热度衰减 / 矛盾检测（代码已使用，旧库需走下面的 ALTER 补列）
+  pinned INTEGER DEFAULT 0,
+  heat REAL DEFAULT 1.0,
+  decay_factor REAL DEFAULT 0.02,
+  superseded INTEGER DEFAULT 0,
+  superseded_at TEXT,
+  superseded_by TEXT
 );
 
 -- Migration: add new columns to existing table (D1 compatible, no non-constant defaults)
+-- 注意：每条 ALTER 都是幂等的安全写法——如果列已存在会报错，可忽略那条单独的报错继续执行下一条。
 ALTER TABLE character_memories ADD COLUMN embedding TEXT;
 ALTER TABLE character_memories ADD COLUMN embedding_model TEXT;
 ALTER TABLE character_memories ADD COLUMN semantic_type TEXT DEFAULT 'event';
@@ -66,6 +74,13 @@ ALTER TABLE character_memories ADD COLUMN reference_message_id TEXT;
 ALTER TABLE character_memories ADD COLUMN archived INTEGER DEFAULT 0;
 ALTER TABLE character_memories ADD COLUMN last_accessed DATETIME;
 ALTER TABLE character_memories ADD COLUMN updated_at DATETIME;
+-- 记忆锁定 / 热度 / 矛盾检测（修复 schema 与代码不一致：代码里已在用但旧 schema 没声明）
+ALTER TABLE character_memories ADD COLUMN pinned INTEGER DEFAULT 0;
+ALTER TABLE character_memories ADD COLUMN heat REAL DEFAULT 1.0;
+ALTER TABLE character_memories ADD COLUMN decay_factor REAL DEFAULT 0.02;
+ALTER TABLE character_memories ADD COLUMN superseded INTEGER DEFAULT 0;
+ALTER TABLE character_memories ADD COLUMN superseded_at TEXT;
+ALTER TABLE character_memories ADD COLUMN superseded_by TEXT;
 
 CREATE TABLE IF NOT EXISTS messages (
   id TEXT PRIMARY KEY,

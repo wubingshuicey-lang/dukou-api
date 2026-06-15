@@ -14,8 +14,21 @@ app.use("*", cors({
 
 const encoder = new TextEncoder();
 
+// 已知的弱/默认 secret，命中即拒绝服务，防止忘了配置时用默认值跑起来。
+const KNOWN_WEAK_SECRETS = new Set([
+  "dukou-jwt-secret-dev-only",
+  "dukou-jwt-secret-change-me",
+  "secret",
+  "",
+]);
+
 function getSecret(c) {
-  return c.env.JWT_SECRET || "dukou-jwt-secret-dev-only";
+  const s = c.env.JWT_SECRET;
+  if (!s || KNOWN_WEAK_SECRETS.has(s)) {
+    // 不直接抛（抛了会让整个 Worker 500），返回 null 由调用方决定。
+    return null;
+  }
+  return s;
 }
 
 async function base64urlEncode(data) {
@@ -75,6 +88,10 @@ async function authMiddleware(c, next) {
   const token = auth.replace(/^Bearer\s+/i, "");
   if (!token) return c.json({ error: "未登录" }, 401);
   const secret = getSecret(c);
+  if (!secret) {
+    console.error("JWT_SECRET 未安全配置，拒绝服务");
+    return c.json({ error: "服务器密钥未配置" }, 500);
+  }
   const payload = await verifyJWT(token, secret);
   if (!payload) return c.json({ error: "登录过期，请重新登录" }, 401);
   c.set("userId", payload.sub);
@@ -98,6 +115,10 @@ app.post("/api/auth/register", async (c) => {
   await db.prepare("INSERT INTO users (id, username, password_hash) VALUES (?, ?, ?)").bind(id, username, hash).run();
 
   const secret = getSecret(c);
+  if (!secret) {
+    console.error("JWT_SECRET 未安全配置，拒绝签发 token");
+    return c.json({ error: "服务器密钥未配置，无法完成注册" }, 500);
+  }
   const token = await signJWT({
     sub: id,
     username,
@@ -120,6 +141,10 @@ app.post("/api/auth/login", async (c) => {
   if (user.password_hash !== expectedHash) return c.json({ error: "用户名或密码错误" }, 401);
 
   const secret = getSecret(c);
+  if (!secret) {
+    console.error("JWT_SECRET 未安全配置，拒绝签发 token");
+    return c.json({ error: "服务器密钥未配置，无法完成登录" }, 500);
+  }
   const token = await signJWT({
     sub: user.id,
     username: user.username,
@@ -843,15 +868,31 @@ app.post("/api/chat", authMiddleware, async (c) => {
 
 // --- Image Generation ---
 
+// 生图允许的上游 baseUrl 白名单，防止 SSRF（已登录用户让 Worker 打任意 URL）。
+// 来源：官方 + 环境变量配置的中转站（IMAGE_BASE_URL / EMBEDDING_BASE_URL）。
+// 如需新增中转站，在 wrangler 配置里加环境变量，不要在这里写死。
+function buildAllowedImageBases(env) {
+  const bases = ["https://api.openai.com/v1"];
+  if (env.IMAGE_BASE_URL) bases.push(env.IMAGE_BASE_URL);
+  if (env.EMBEDDING_BASE_URL) bases.push(env.EMBEDDING_BASE_URL);
+  return bases.map(b => b.replace(/\/+$/, ""));
+}
+
 app.post("/api/images", authMiddleware, async (c) => {
   const body = await c.req.json();
   const { prompt, size, n, apiKey: reqKey, baseUrl: reqBase } = body;
   if (!prompt) return c.json({ error: "prompt 不能为空" }, 400);
 
-  // 优先用请求里带的 key（前端设置页填的生图专用key），否则用 Zenmux key
+  // baseUrl 走白名单：客户端传的 reqBase 必须命中才接受，否则回退到环境变量。
+  const allowed = buildAllowedImageBases(c.env);
+  const reqBaseClean = reqBase ? reqBase.replace(/\/+$/, "") : null;
+  const baseUrl = (reqBaseClean && allowed.includes(reqBaseClean))
+    ? reqBaseClean
+    : (c.env.IMAGE_BASE_URL || c.env.EMBEDDING_BASE_URL || "https://api.openai.com/v1").replace(/\/+$/, "");
+
+  // 优先用请求里带的 key（前端设置页填的生图专用key），否则用中转站 key
   const apiKey = reqKey || c.env.OPENAI_API_KEY;
   if (!apiKey) return c.json({ error: "未配置 API Key" }, 500);
-  const baseUrl = (reqBase || c.env.EMBEDDING_BASE_URL || "https://api.openai.com/v1").replace(/\/+$/, "");
 
   try {
     const resp = await fetch(`${baseUrl}/images/generations`, {
